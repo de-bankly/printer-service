@@ -30,7 +30,7 @@ app.get('/', (req, res) => {
 app.get('/status', async (req, res) => {
   try {
     printer.alignCenter();
-    printer.println('Lukas Stinkt!!!!!');
+    printer.println('Hallo Welt!');
     printer.drawLine();
     printer.cut();
 
