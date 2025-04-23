@@ -300,7 +300,8 @@ app.post('/print/receipt', async (req, res) => {
         printer.append(Buffer.from([0x1d, 0x66, 0x00])); // GS f n - HRI font - font A
 
         // Print the barcode - Using the correct barcode type (67 for EAN13/JAN13) and settings
-        printer.printBarcode(barcodeValue, 67, {
+        // Use the full 13-digit orderNumber directly
+        printer.printBarcode(orderNumber, 67, {
           hriPos: 2, // Human readable characters below (position: 2 = below)
           hriFont: 0, // Font for human readable characters
           width: 3, // Width of barcode (3 is medium)
@@ -476,7 +477,8 @@ app.post('/print/deposit', async (req, res) => {
       printer.append(Buffer.from([0x1d, 0x66, 0x00])); // GS f n - HRI font - font A
 
       // Print the barcode - Using the correct barcode type (67 for EAN13/JAN13) and settings
-      printer.printBarcode(barcodeValue, 67, {
+      // Use the full 13-digit orderNumber directly
+      printer.printBarcode(orderNumber, 67, {
         hriPos: 2, // Human readable characters below (position: 2 = below)
         hriFont: 0, // Font for human readable characters
         width: 3, // Width of barcode (3 is medium)
