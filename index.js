@@ -419,6 +419,105 @@ app.post('/print/deposit', async (req, res) => {
   }
 });
 
+/**
+ * @route POST /print/barcode
+ * @description Prints an EAN-13 barcode based on the provided ID.
+ * @param {object} req.body - The request body.
+ * @param {string} req.body.id - The EAN number (12 or 13 digits) to print as a barcode.
+ * @returns {object} 200 - Success response indicating the barcode was printed.
+ * @returns {object} 400 - Bad request if the ID is invalid.
+ * @returns {object} 500 - Error response if printing fails.
+ */
+app.post('/print/barcode', async (req, res) => {
+  try {
+    const { id } = req.body;
+
+    if (!id || typeof id !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or missing "id" in request body.',
+      });
+    }
+
+    // Prepare barcode value: numeric, 12 or 13 digits
+    let barcodeValue = id.replace(/\D/g, ''); // Remove non-digits
+
+    // Validate for EAN-13 (needs 12 data digits for the library)
+    if (barcodeValue.length === 13) {
+      // Library calculates check digit, so provide the first 12
+      barcodeValue = barcodeValue.substring(0, 12);
+    } else if (barcodeValue.length !== 12) {
+      console.warn(
+        `Provided ID '${id}' is not a valid 12 or 13-digit EAN format after cleaning. Cannot print barcode.`
+      );
+      return res.status(400).json({
+        success: false,
+        message: `Provided ID '${id}' is not a valid 12 or 13-digit EAN format.`,
+      });
+    }
+
+    printer.clear();
+    printer.alignCenter();
+
+    // --- Print Barcode (EAN-13) ---
+    try {
+      // Print EAN-13 (Type 67). Library calculates check digit.
+      printer.printBarcode(barcodeValue, 67, {
+        hriPos: 2, // HRI below barcode
+        hriFont: 0, // Font A
+        width: 3, // Barcode width multiplier
+        height: 80, // Barcode height
+      });
+      printer.newLine(); // Add some space after the barcode
+    } catch (barcodeError) {
+      console.error('Error printing EAN13 barcode:', barcodeError);
+      // Attempt to clear printer buffer on barcode specific error
+      try {
+        printer.clear();
+      } catch (e) {
+        console.error('Error clearing printer during barcode error handling:', e);
+      }
+      return res.status(500).json({
+        error: barcodeError.message || 'Error generating barcode',
+        success: false,
+        message: 'Barcode could not be generated or printed.',
+      });
+    }
+
+    printer.cut();
+
+    // --- Execute Print Job ---
+    try {
+      await printer.execute();
+      res.json({ success: true, message: 'Barcode erfolgreich gedruckt' });
+    } catch (printError) {
+      console.error('Error executing print job:', printError);
+      try {
+        printer.clear(); // Attempt to clear printer buffer on error
+      } catch (e) {
+        console.error('Error clearing printer during print error handling:', e);
+      }
+      res.status(500).json({
+        error: printError.message || 'Fehler beim Drucken',
+        success: false,
+        message: 'Druckauftrag konnte nicht ausgeführt werden.',
+      });
+    }
+  } catch (error) {
+    console.error('Fehler bei der Barcode-Druckanforderung:', error);
+    try {
+      printer.clear(); // Attempt to clear printer buffer on general error
+    } catch (clearError) {
+      console.error('Error clearing printer after general failure:', clearError);
+    }
+    res.status(500).json({
+      error: error.message || 'Unbekannter Fehler',
+      message: 'Barcode konnte nicht gedruckt werden.',
+      success: false,
+    });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Printer Service running on port ${PORT}`);
 });
