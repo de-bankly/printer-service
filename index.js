@@ -2,20 +2,29 @@ import express from 'express';
 import cors from 'cors';
 import { ThermalPrinter, PrinterTypes } from 'node-thermal-printer';
 
+/** @type {import('express').Express} */
 const app = express();
+/** @const {number} Port the server listens on */
 const PORT = 3001;
 
 app.use(cors());
 app.use(express.json());
 
+/** @type {ThermalPrinter} Thermal printer instance */
 const printer = new ThermalPrinter({
   type: PrinterTypes.EPSON,
-  interface: '\\\\localhost\\Printer69',
+  interface: '\\\\localhost\\Printer69', // Adjust this to your printer path
   characterSet: 'WPC1252',
   removeSpecialCharacters: false,
   lineCharacter: '-',
 });
 
+/**
+ * @route GET /
+ * @description Checks the status of the printer service.
+ * @returns {object} 200 - Success response with service status.
+ * @returns {object} 500 - Error response if status check fails.
+ */
 app.get('/', (req, res) => {
   try {
     res.json({
@@ -33,12 +42,29 @@ app.get('/', (req, res) => {
   }
 });
 
+/**
+ * @route POST /print/receipt
+ * @description Generates and prints a sales receipt.
+ * @param {object} req.body - The receipt data.
+ * @param {string} [req.body.title='KAUFBELEG'] - The title of the receipt.
+ * @param {Array<object>} req.body.items - Array of items purchased.
+ * @param {string} req.body.items[].name - Name of the item.
+ * @param {string} req.body.items[].price - Price of the item (formatted string).
+ * @param {string} [req.body.items[].description] - Optional description for the item.
+ * @param {string} req.body.total - The total amount (formatted string).
+ * @param {string} req.body.date - The date of the transaction.
+ * @param {string} req.body.orderNumber - The unique order or receipt number.
+ * @param {string} [req.body.footerText] - Optional text to print at the bottom.
+ * @returns {object} 200 - Success response indicating the receipt was printed.
+ * @returns {object} 500 - Error response if printing fails.
+ */
 app.post('/print/receipt', async (req, res) => {
   try {
-    const { title, items, total, date, orderNumber } = req.body;
+    const { title, items, total, date, orderNumber, footerText } = req.body;
 
     printer.clear();
 
+    // --- Header ---
     printer.alignCenter();
     printer.setTextSize(1, 1);
     printer.bold(true);
@@ -47,28 +73,35 @@ app.post('/print/receipt', async (req, res) => {
     printer.setTextNormal();
     printer.newLine();
 
+    // --- Meta Info ---
     printer.alignLeft();
+    printer.setTextSize(0, 0);
     if (orderNumber) {
       printer.println(`Beleg-Nr.: ${orderNumber}`);
     }
     if (date) {
       printer.println(`Datum: ${date}`);
     }
+    printer.setTextNormal();
     printer.drawLine();
 
+    // --- Items ---
     if (items && Array.isArray(items)) {
       let hasDiscountItems = false;
 
+      // Print regular items first
       items.forEach(item => {
         try {
-          if (
+          const isDiscountOrMeta =
             item.name.includes('Rabatt') ||
             item.name.includes('Gutschrift') ||
-            item.name === 'Zahlungsart' ||
-            item.name === 'Rückgeld'
-          ) {
+            item.name.toLowerCase() === 'zahlungsart' ||
+            item.name.toLowerCase() === 'rückgeld' ||
+            item.name.toLowerCase() === 'gegeben';
+
+          if (isDiscountOrMeta) {
             hasDiscountItems = true;
-            return;
+            return; // Skip discount/meta items in this loop
           }
 
           printer.leftRight(item.name, item.price);
@@ -79,127 +112,167 @@ app.post('/print/receipt', async (req, res) => {
           }
         } catch (itemError) {
           console.error('Error printing item:', itemError, item);
+          // Continue printing other items if one fails
         }
       });
 
+      // Print discount/payment details if they exist
       if (hasDiscountItems) {
+        printer.drawLine('-'); // Separator before discount/payment details
+
+        items.forEach(item => {
+          try {
+            const isDiscountOrMeta =
+              item.name.includes('Rabatt') ||
+              item.name.includes('Gutschrift') ||
+              item.name.toLowerCase() === 'zahlungsart' ||
+              item.name.toLowerCase() === 'gegeben' ||
+              item.name.toLowerCase() === 'rückgeld';
+
+            if (isDiscountOrMeta) {
+              // Specific formatting for payment details
+              if (
+                item.name.toLowerCase() === 'zahlungsart' ||
+                item.name.toLowerCase() === 'gegeben' ||
+                item.name.toLowerCase() === 'rückgeld'
+              ) {
+                printer.setTextSize(0, 0);
+                printer.leftRight(item.name + ':', item.price);
+                printer.setTextNormal();
+              } else {
+                // Standard leftRight for discounts/credits
+                printer.leftRight(item.name, item.price);
+              }
+            }
+          } catch (detailError) {
+            console.error('Error printing discount/payment item:', detailError, item);
+            // Continue printing other details if one fails
+          }
+        });
+        printer.drawLine(); // Separator after discount/payment details
+      } else {
+        // Only draw line after items if no discount section follows
         printer.drawLine();
-        printer.bold(true);
-        printer.leftRight('ZWISCHENSUMME:', total);
-        printer.bold(false);
-
-        items.forEach(item => {
-          try {
-            if (item.name.includes('Rabatt') || item.name.includes('Gutschrift')) {
-              printer.leftRight(item.name, item.price);
-            }
-          } catch (discountError) {
-            console.error('Error printing discount item:', discountError, item);
-          }
-        });
-
-        printer.drawLine();
-        items.forEach(item => {
-          try {
-            if (item.name === 'Zahlungsart') {
-              printer.leftRight(item.name, item.price);
-            }
-          } catch (paymentError) {
-            console.error('Error printing payment item:', paymentError, item);
-          }
-        });
-
-        items.forEach(item => {
-          try {
-            if (item.name === 'Rückgeld') {
-              printer.leftRight(item.name, item.price);
-            }
-          } catch (changeError) {
-            console.error('Error printing change item:', changeError, item);
-          }
-        });
       }
     }
 
-    printer.drawLine();
-
+    // --- Total ---
     if (total) {
       printer.bold(true);
-      printer.setTextSize(0, 1);
-      printer.leftRight('GESAMTBETRAG:', total);
+      printer.setTextSize(1, 1);
+      printer.leftRight('GESAMT:', total);
       printer.setTextNormal();
       printer.bold(false);
     }
 
     printer.newLine();
-    printer.alignCenter();
-    printer.println('Enthaltene MwSt. 19%');
 
+    // --- VAT Info ---
+    printer.alignCenter();
+    printer.setTextSize(0, 0);
+    printer.println('Enthaltene MwSt. 19%'); // Assuming fixed VAT
+    printer.setTextNormal();
     printer.newLine();
+
+    // --- Company Info ---
     printer.println('BankLy LLC German Branch');
     printer.println('Mainzer Landstraße 55');
     printer.println('60325 Frankfurt, Germany');
+    printer.newLine();
 
+    // --- QR Code ---
     try {
-      printer.newLine();
       printer.alignCenter();
-      printer.printQR(`RECEIPT:${orderNumber}`, {
-        model: 2,
-        cellSize: 6,
-        correction: 'M',
-      });
-
-      printer.newLine();
-      printer.println('Scannen Sie für die digitale Quittung');
-      printer.newLine();
+      if (orderNumber) {
+        printer.printQR(`RECEIPT:${orderNumber}`, {
+          cellSize: 5,
+          correction: 'M',
+          model: 2,
+        });
+        printer.newLine();
+      }
     } catch (qrError) {
       console.error('Error printing QR code:', qrError);
+      // Continue printing even if QR code fails
+    }
+
+    // --- Footer Text ---
+    if (footerText) {
+      printer.alignCenter();
+      printer.println(footerText);
+      printer.newLine();
     }
 
     printer.cut();
 
+    // --- Execute Print Job ---
     try {
-      const success = await printer.execute();
-      printer.clear();
-      res.json({ success, message: 'Beleg erfolgreich gedruckt' });
+      await printer.execute();
+      res.json({ success: true, message: 'Beleg erfolgreich gedruckt' });
     } catch (printError) {
       console.error('Error executing print job:', printError);
+      try {
+        printer.clear(); // Attempt to clear printer buffer on error
+      } catch (e) {
+        console.error('Error clearing printer during print error handling:', e);
+      }
       res.status(500).json({
         error: printError.message || 'Fehler beim Drucken',
         success: false,
+        message: 'Druckauftrag konnte nicht ausgeführt werden.',
       });
     }
   } catch (error) {
-    console.error('Fehler beim Drucken des Belegs:', error);
+    console.error('Fehler bei der Belegerstellung:', error);
 
-    let errorMessage = error.message;
+    let errorMessage = 'Ein unbekannter Fehler ist bei der Belegerstellung aufgetreten.';
+    if (error.message) {
+      errorMessage = error.message;
+    }
+    // Specific error handling can be useful
     if (error.code === 'ECONNREFUSED') {
-      errorMessage = 'Drucker nicht erreichbar. Bitte überprüfen Sie die Verbindung.';
+      errorMessage =
+        'Drucker nicht erreichbar. Bitte überprüfen Sie die Verbindung und den Druckerservice.';
     } else if (error.code === 'EPERM') {
       errorMessage = 'Keine Berechtigung zum Zugriff auf den Drucker.';
     }
 
     try {
-      printer.clear();
+      printer.clear(); // Attempt to clear printer buffer on general error
     } catch (clearError) {
       console.error('Error clearing printer after failure:', clearError);
     }
 
     res.status(500).json({
       error: errorMessage,
+      message: 'Beleg konnte nicht erstellt oder gedruckt werden.',
       success: false,
     });
   }
 });
 
+/**
+ * @route POST /print/deposit
+ * @description Generates and prints a deposit slip (Pfandbon).
+ * @param {object} req.body - The deposit slip data.
+ * @param {string} [req.body.title='PFANDBON'] - The title of the deposit slip.
+ * @param {Array<object>} req.body.items - Array of deposit items.
+ * @param {string} req.body.items[].name - Name of the deposit item.
+ * @param {string} req.body.items[].price - Value of the deposit item (formatted string).
+ * @param {string} [req.body.items[].description] - Optional description.
+ * @param {string} req.body.total - The total deposit amount (formatted string).
+ * @param {string} req.body.date - The date of the transaction.
+ * @param {string} req.body.orderNumber - The unique slip number (used for barcode).
+ * @returns {object} 200 - Success response indicating the slip was printed.
+ * @returns {object} 500 - Error response if printing fails.
+ */
 app.post('/print/deposit', async (req, res) => {
   try {
     const { title, items, total, date, orderNumber } = req.body;
 
     printer.clear();
 
-    printer.alignCenter();
-
+    // --- Header ---
     printer.alignCenter();
     printer.setTextSize(1, 1);
     printer.bold(true);
@@ -208,15 +281,19 @@ app.post('/print/deposit', async (req, res) => {
     printer.setTextNormal();
     printer.newLine();
 
+    // --- Meta Info ---
     printer.alignLeft();
+    printer.setTextSize(0, 0);
     if (orderNumber) {
       printer.println(`Beleg-Nr.: ${orderNumber}`);
     }
     if (date) {
       printer.println(`Datum: ${date}`);
     }
+    printer.setTextNormal();
     printer.drawLine();
 
+    // --- Items ---
     if (items && Array.isArray(items)) {
       items.forEach(item => {
         try {
@@ -227,85 +304,116 @@ app.post('/print/deposit', async (req, res) => {
             printer.setTextNormal();
           }
         } catch (itemError) {
-          console.error('Error printing item:', itemError, item);
+          console.error('Error printing deposit item:', itemError, item);
+          // Continue printing other items if one fails
         }
       });
     }
 
     printer.drawLine();
+
+    // --- Total ---
     if (total) {
       printer.bold(true);
-      printer.setTextSize(0, 1);
-      printer.leftRight('GESAMTBETRAG:', total);
+      printer.setTextSize(1, 1);
+      printer.leftRight('GESAMT PFAND:', total);
       printer.setTextNormal();
       printer.bold(false);
     }
 
     printer.newLine();
+
+    // --- Company Info ---
     printer.alignCenter();
+    printer.setTextSize(0, 0);
     printer.println('BankLy LLC German Branch');
     printer.println('Mainzer Landstraße 55');
     printer.println('60325 Frankfurt, Germany');
+    printer.setTextNormal();
+    printer.newLine();
 
+    // --- Barcode (EAN-13) ---
     try {
-      printer.newLine();
-      printer.alignCenter();
+      if (orderNumber) {
+        printer.alignCenter();
 
-      let barcodeValue = orderNumber.replace(/\D/g, ''); // Remove non-digits
+        // Prepare barcode value: numeric, 12 digits (EAN-13 needs 12 data + 1 check digit)
+        let barcodeValue = orderNumber.replace(/\\D/g, ''); // Remove non-digits
 
-      if (barcodeValue.length < 12) {
-        barcodeValue = barcodeValue.padStart(12, '0');
-      } else if (barcodeValue.length > 12) {
-        barcodeValue = barcodeValue.substring(0, 12);
+        // Check if the cleaned barcode has the correct length for EAN-13 (13 digits)
+        if (barcodeValue.length === 13) {
+          // Use the first 12 digits for the printBarcode function (it calculates the check digit)
+          barcodeValue = barcodeValue.substring(0, 12);
+        } else {
+          // Handle cases where the input is not 13 digits - log a warning
+          console.warn(
+            `Provided orderNumber '${orderNumber}' is not a valid 13-digit EAN-13 format after cleaning. Attempting to print by padding/truncating to 12 digits.`
+          );
+          // Fallback: Pad or truncate to 12 digits as before
+          if (barcodeValue.length < 12) {
+            barcodeValue = barcodeValue.padStart(12, '0');
+          } else if (barcodeValue.length > 12) {
+            // Take the last 12 digits if too long (might still be incorrect)
+            barcodeValue = barcodeValue.substring(barcodeValue.length - 12);
+          }
+        }
+
+        // Print EAN-13 (Type 67). Library calculates check digit.
+        printer.printBarcode(barcodeValue, 67, {
+          hriPos: 2, // HRI below barcode
+          hriFont: 0, // Font A
+          width: 3, // Barcode width multiplier
+          height: 80, // Barcode height
+        });
+        printer.newLine();
       }
-
-      // Enable HRI characters and set position to below barcode
-      printer.append(Buffer.from([0x1d, 0x48, 0x02])); // GS H n - HRI position - below barcode
-      printer.append(Buffer.from([0x1d, 0x66, 0x00])); // GS f n - HRI font - font A
-
-      printer.printBarcode(orderNumber, 67, {
-        hriPos: 2,
-        hriFont: 0,
-        width: 3,
-        height: 100,
-      });
-
-      printer.newLine();
     } catch (barcodeError) {
       console.error('Error printing EAN13 barcode:', barcodeError);
+      // Continue printing even if barcode fails
     }
 
     printer.cut();
 
+    // --- Execute Print Job ---
     try {
-      const success = await printer.execute();
-      printer.clear();
-      res.json({ success, message: 'Pfandbeleg erfolgreich gedruckt' });
+      await printer.execute();
+      res.json({ success: true, message: 'Pfandbeleg erfolgreich gedruckt' });
     } catch (printError) {
       console.error('Error executing print job:', printError);
+      try {
+        printer.clear(); // Attempt to clear printer buffer on error
+      } catch (e) {
+        console.error('Error clearing printer during print error handling:', e);
+      }
       res.status(500).json({
         error: printError.message || 'Fehler beim Drucken',
         success: false,
+        message: 'Druckauftrag konnte nicht ausgeführt werden.',
       });
     }
   } catch (error) {
-    console.error('Error printing deposit receipt:', error);
+    console.error('Fehler bei der Pfandbonerstellung:', error);
 
-    let errorMessage = error.message;
+    let errorMessage = 'Ein unbekannter Fehler ist bei der Pfandbonerstellung aufgetreten.';
+    if (error.message) {
+      errorMessage = error.message;
+    }
     if (error.code === 'ECONNREFUSED') {
-      errorMessage = 'Drucker nicht erreichbar. Bitte überprüfen Sie die Verbindung.';
+      errorMessage =
+        'Drucker nicht erreichbar. Bitte überprüfen Sie die Verbindung und den Druckerservice.';
     } else if (error.code === 'EPERM') {
       errorMessage = 'Keine Berechtigung zum Zugriff auf den Drucker.';
     }
 
     try {
-      printer.clear();
+      printer.clear(); // Attempt to clear printer buffer on general error
     } catch (clearError) {
       console.error('Error clearing printer after failure:', clearError);
     }
 
     res.status(500).json({
       error: errorMessage,
+      message: 'Pfandbon konnte nicht erstellt oder gedruckt werden.',
       success: false,
     });
   }
