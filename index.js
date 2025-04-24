@@ -1,15 +1,10 @@
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import { ThermalPrinter, PrinterTypes } from 'node-thermal-printer';
 
-// Load environment variables
-dotenv.config();
-
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = 3001;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
@@ -21,17 +16,11 @@ const printer = new ThermalPrinter({
   lineCharacter: '-',
 });
 
-// Routes
 app.get('/', (req, res) => {
   try {
-    // Simple way to check printer connection status
-    const isConnected = true; // Assume connected for simplicity, in a real app would check with the printer.isPrinterConnected()
-
     res.json({
-      success: isConnected,
-      message: isConnected
-        ? 'Printer service is running and ready'
-        : 'Printer service is running but printer not connected',
+      success: true,
+      message: 'Printer service is running and ready',
       version: '1.0.0',
     });
   } catch (error) {
@@ -44,113 +33,12 @@ app.get('/', (req, res) => {
   }
 });
 
-// Check printer status - without printing a test page
-app.get('/status', async (req, res) => {
-  try {
-    // Check if printer is connected without printing anything
-    const isConnected = true; // In a real app this would use printer.isPrinterConnected() or similar
-
-    console.log('Status check requested - reporting printer as connected:', isConnected);
-
-    res.json({
-      success: isConnected,
-      message: isConnected ? 'Printer is connected' : 'Printer is not connected',
-    });
-  } catch (error) {
-    console.error('Status check error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      message: 'Error checking printer status',
-    });
-  }
-});
-
-// Print endpoint
-app.post('/print', async (req, res) => {
-  try {
-    const { content, options } = req.body;
-
-    if (!content) {
-      return res.status(400).json({ error: 'No content provided for printing' });
-    }
-
-    // Process print content
-    if (content.text) {
-      printer.println(content.text);
-    }
-
-    if (content.alignCenter) {
-      printer.alignCenter();
-    }
-
-    if (content.alignLeft) {
-      printer.alignLeft();
-    }
-
-    if (content.alignRight) {
-      printer.alignRight();
-    }
-
-    if (content.drawLine) {
-      printer.drawLine();
-    }
-
-    if (content.title) {
-      printer.alignCenter();
-      printer.bold(true);
-      printer.println(content.title);
-      printer.bold(false);
-      printer.drawLine();
-    }
-
-    if (content.items && Array.isArray(content.items)) {
-      content.items.forEach(item => {
-        printer.println(item);
-      });
-    }
-
-    // Add a cut at the end
-    if (content.cut !== false) {
-      printer.cut();
-    }
-
-    // Execute print job
-    const success = await printer.execute();
-
-    printer.clear();
-
-    res.json({ success, message: 'Print job sent successfully' });
-  } catch (error) {
-    console.error('Printing error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Custom print template for receipt
 app.post('/print/receipt', async (req, res) => {
   try {
-    const { title, items, total, date, orderNumber, footerText, printerConfig, isDepositReceipt } =
-      req.body;
+    const { title, items, total, date, orderNumber } = req.body;
 
-    // Set printer configuration if provided
-    if (printerConfig) {
-      try {
-        if (printerConfig.characterSet) {
-          printer.setCharacterSet(printerConfig.characterSet);
-          console.log(`Character set set to: ${printerConfig.characterSet}`);
-        }
-      } catch (configError) {
-        console.error('Error setting printer configuration:', configError);
-        // Continue execution even if configuration fails
-        // Just log the error but don't stop the printing process
-      }
-    }
-
-    // Clear any previous print jobs
     printer.clear();
 
-    // Header
     printer.alignCenter();
     printer.setTextSize(1, 1);
     printer.bold(true);
@@ -159,7 +47,6 @@ app.post('/print/receipt', async (req, res) => {
     printer.setTextNormal();
     printer.newLine();
 
-    // Order info
     printer.alignLeft();
     if (orderNumber) {
       printer.println(`Beleg-Nr.: ${orderNumber}`);
@@ -169,14 +56,11 @@ app.post('/print/receipt', async (req, res) => {
     }
     printer.drawLine();
 
-    // Items
     if (items && Array.isArray(items)) {
       let hasDiscountItems = false;
 
-      // First print regular items (products)
       items.forEach(item => {
         try {
-          // Skip special items like discounts, payment methods for now
           if (
             item.name.includes('Rabatt') ||
             item.name.includes('Gutschrift') ||
@@ -195,18 +79,15 @@ app.post('/print/receipt', async (req, res) => {
           }
         } catch (itemError) {
           console.error('Error printing item:', itemError, item);
-          // Continue with other items
         }
       });
 
-      // Print subtotal if there are discounts or special items
       if (hasDiscountItems) {
         printer.drawLine();
         printer.bold(true);
         printer.leftRight('ZWISCHENSUMME:', total);
         printer.bold(false);
 
-        // Now print discount items
         items.forEach(item => {
           try {
             if (item.name.includes('Rabatt') || item.name.includes('Gutschrift')) {
@@ -214,11 +95,9 @@ app.post('/print/receipt', async (req, res) => {
             }
           } catch (discountError) {
             console.error('Error printing discount item:', discountError, item);
-            // Continue with other items
           }
         });
 
-        // Print payment info
         printer.drawLine();
         items.forEach(item => {
           try {
@@ -227,11 +106,9 @@ app.post('/print/receipt', async (req, res) => {
             }
           } catch (paymentError) {
             console.error('Error printing payment item:', paymentError, item);
-            // Continue with other items
           }
         });
 
-        // Print change info if applicable
         items.forEach(item => {
           try {
             if (item.name === 'Rückgeld') {
@@ -239,7 +116,6 @@ app.post('/print/receipt', async (req, res) => {
             }
           } catch (changeError) {
             console.error('Error printing change item:', changeError, item);
-            // Continue with other items
           }
         });
       }
@@ -247,7 +123,6 @@ app.post('/print/receipt', async (req, res) => {
 
     printer.drawLine();
 
-    // Total
     if (total) {
       printer.bold(true);
       printer.setTextSize(0, 1);
@@ -256,88 +131,33 @@ app.post('/print/receipt', async (req, res) => {
       printer.bold(false);
     }
 
-    // Add tax information (only for regular receipts, not deposit receipts)
-    if (!isDepositReceipt) {
-      printer.newLine();
-      printer.alignCenter();
-      printer.println('Enthaltene MwSt. 19%');
-    }
+    printer.newLine();
+    printer.alignCenter();
+    printer.println('Enthaltene MwSt. 19%');
 
-    // Add store information
     printer.newLine();
     printer.println('BankLy LLC German Branch');
     printer.println('Mainzer Landstraße 55');
     printer.println('60325 Frankfurt, Germany');
 
-    // Footer
-    if (footerText) {
+    try {
       printer.newLine();
       printer.alignCenter();
-      printer.bold(true);
-      printer.println(footerText);
-      printer.bold(false);
-    }
+      printer.printQR(`RECEIPT:${orderNumber}`, {
+        model: 2,
+        cellSize: 6,
+        correction: 'M',
+      });
 
-    // For deposit receipts, print EAN13 barcode instead of QR code
-    if (isDepositReceipt && orderNumber) {
-      try {
-        printer.newLine();
-        printer.alignCenter();
-
-        // Clean the order number to ensure it's valid for EAN13
-        // EAN13 requires exactly 12 digits (13th is checksum)
-        let barcodeValue = orderNumber.replace(/\D/g, ''); // Remove non-digits
-
-        // Pad with zeros if necessary or truncate to 12 digits
-        if (barcodeValue.length < 12) {
-          barcodeValue = barcodeValue.padStart(12, '0');
-        } else if (barcodeValue.length > 12) {
-          barcodeValue = barcodeValue.substring(0, 12);
-        }
-
-        // Enable HRI characters and set position to below barcode
-        printer.append(Buffer.from([0x1d, 0x48, 0x02])); // GS H n - HRI position - below barcode
-        printer.append(Buffer.from([0x1d, 0x66, 0x00])); // GS f n - HRI font - font A
-
-        // Print the barcode - Using the correct barcode type (67 for EAN13/JAN13) and settings
-        // Use the full 13-digit orderNumber directly
-        printer.printBarcode(orderNumber, 67, {
-          hriPos: 2, // Human readable characters below (position: 2 = below)
-          hriFont: 0, // Font for human readable characters
-          width: 3, // Width of barcode (3 is medium)
-          height: 100, // Height of barcode
-        });
-
-        printer.newLine();
-        printer.println('Pfandbeleg Nummer');
-        printer.newLine();
-      } catch (barcodeError) {
-        console.error('Error printing EAN13 barcode:', barcodeError);
-        // Continue even if barcode fails
-      }
-    } else {
-      // Add QR code for digital receipt (optional, only for regular receipts)
-      try {
-        printer.newLine();
-        printer.alignCenter();
-        printer.printQR(`RECEIPT:${orderNumber}`, {
-          model: 2,
-          cellSize: 6,
-          correction: 'M',
-        });
-
-        printer.newLine();
-        printer.println('Scannen Sie für die digitale Quittung');
-        printer.newLine();
-      } catch (qrError) {
-        console.error('Error printing QR code:', qrError);
-        // Continue even if QR code fails
-      }
+      printer.newLine();
+      printer.println('Scannen Sie für die digitale Quittung');
+      printer.newLine();
+    } catch (qrError) {
+      console.error('Error printing QR code:', qrError);
     }
 
     printer.cut();
 
-    // Execute print
     try {
       const success = await printer.execute();
       printer.clear();
@@ -352,7 +172,6 @@ app.post('/print/receipt', async (req, res) => {
   } catch (error) {
     console.error('Fehler beim Drucken des Belegs:', error);
 
-    // Try to send a more helpful error message
     let errorMessage = error.message;
     if (error.code === 'ECONNREFUSED') {
       errorMessage = 'Drucker nicht erreichbar. Bitte überprüfen Sie die Verbindung.';
@@ -360,7 +179,6 @@ app.post('/print/receipt', async (req, res) => {
       errorMessage = 'Keine Berechtigung zum Zugriff auf den Drucker.';
     }
 
-    // Make sure to clear the printer
     try {
       printer.clear();
     } catch (clearError) {
@@ -374,38 +192,22 @@ app.post('/print/receipt', async (req, res) => {
   }
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Printer Service running on port ${PORT}`);
-});
-
-// Add dedicated endpoint for deposit receipts
 app.post('/print/deposit', async (req, res) => {
   try {
-    const { title, items, total, date, orderNumber, footerText, printerConfig } = req.body;
+    const { title, items, total, date, orderNumber } = req.body;
 
-    // Clear any previous print jobs
     printer.clear();
 
-    // Set printer configuration
-    if (printerConfig?.characterSet) {
-      try {
-        printer.setCharacterSet(printerConfig.characterSet);
-      } catch (configError) {
-        console.error('Error setting character set:', configError);
-      }
-    }
+    printer.alignCenter();
 
-    // Print header
     printer.alignCenter();
     printer.setTextSize(1, 1);
     printer.bold(true);
-    printer.println(title || 'PFANDBELEG');
+    printer.println(title || 'PFANDBON');
     printer.bold(false);
     printer.setTextNormal();
     printer.newLine();
 
-    // Print receipt info
     printer.alignLeft();
     if (orderNumber) {
       printer.println(`Beleg-Nr.: ${orderNumber}`);
@@ -415,7 +217,6 @@ app.post('/print/deposit', async (req, res) => {
     }
     printer.drawLine();
 
-    // Print items
     if (items && Array.isArray(items)) {
       items.forEach(item => {
         try {
@@ -431,7 +232,6 @@ app.post('/print/deposit', async (req, res) => {
       });
     }
 
-    // Print total
     printer.drawLine();
     if (total) {
       printer.bold(true);
@@ -441,31 +241,18 @@ app.post('/print/deposit', async (req, res) => {
       printer.bold(false);
     }
 
-    // Print store info
     printer.newLine();
     printer.alignCenter();
     printer.println('BankLy LLC German Branch');
     printer.println('Mainzer Landstraße 55');
     printer.println('60325 Frankfurt, Germany');
 
-    // Print footer
-    if (footerText) {
-      printer.newLine();
-      printer.alignCenter();
-      printer.bold(true);
-      printer.println(footerText);
-      printer.bold(false);
-    }
-
-    // Generate and print EAN13 barcode
     try {
       printer.newLine();
       printer.alignCenter();
 
-      // Clean the order number to ensure it's valid for EAN13
       let barcodeValue = orderNumber.replace(/\D/g, ''); // Remove non-digits
 
-      // Pad with zeros if necessary or truncate to 12 digits
       if (barcodeValue.length < 12) {
         barcodeValue = barcodeValue.padStart(12, '0');
       } else if (barcodeValue.length > 12) {
@@ -476,23 +263,18 @@ app.post('/print/deposit', async (req, res) => {
       printer.append(Buffer.from([0x1d, 0x48, 0x02])); // GS H n - HRI position - below barcode
       printer.append(Buffer.from([0x1d, 0x66, 0x00])); // GS f n - HRI font - font A
 
-      // Print the barcode - Using the correct barcode type (67 for EAN13/JAN13) and settings
-      // Use the full 13-digit orderNumber directly
       printer.printBarcode(orderNumber, 67, {
-        hriPos: 2, // Human readable characters below (position: 2 = below)
-        hriFont: 0, // Font for human readable characters
-        width: 3, // Width of barcode (3 is medium)
-        height: 100, // Height of barcode
+        hriPos: 2,
+        hriFont: 0,
+        width: 3,
+        height: 100,
       });
 
-      printer.newLine();
-      printer.println('Pfandbeleg Nummer');
       printer.newLine();
     } catch (barcodeError) {
       console.error('Error printing EAN13 barcode:', barcodeError);
     }
 
-    // Cut and print
     printer.cut();
 
     try {
@@ -527,4 +309,8 @@ app.post('/print/deposit', async (req, res) => {
       success: false,
     });
   }
+});
+
+app.listen(PORT, () => {
+  console.log(`Printer Service running on port ${PORT}`);
 });
