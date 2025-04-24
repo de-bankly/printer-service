@@ -11,7 +11,7 @@ app.use(express.json());
 const printer = new ThermalPrinter({
   type: PrinterTypes.EPSON,
   interface: '\\\\localhost\\Printer69',
-  characterSet: 'SLOVENIA',
+  characterSet: 'PC858_EURO',
   removeSpecialCharacters: false,
   lineCharacter: '-',
 });
